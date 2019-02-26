@@ -1,8 +1,6 @@
 import numpy as np
-import random
 
 class BitFlipEnv:
-    # def __init__(self, size = 8, shaped_reward = False):
     def __init__(self, size, shaped_reward=False, dynamic=False):
         # Initialize env params
         self.shaped_reward = shaped_reward
@@ -16,7 +14,6 @@ class BitFlipEnv:
 
         # Dynamic goal settings
         self.dynamic = dynamic
-        self.flip_prob = 0.3
 
 
     def step(self, action):
@@ -46,13 +43,15 @@ class BitFlipEnv:
                 done = True
 
         if self.dynamic:
-            if random.random() < self.flip_prob:
-                random_bit = random.randint(0, self.size - 1)
-                self.target[random_bit] = 1 - self.target[random_bit]
+            self.target = 1 - self.target
 
         return next_state, reward, done
 
     def reset(self):
+        """
+        Resets the new bit-flip environment
+        :return: an initialized environment state
+        """
         self.steps_done = 0
         self.state = np.random.randint(2, size=self.size)
         self.target = np.random.randint(2, size=self.size)

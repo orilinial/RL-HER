@@ -112,6 +112,8 @@ def train(args):
             action = select_action(args, state, goal, actions_num, policy_net, steps_done, device)
             next_state, reward, done = env.step(action.item())
 
+            old_goal = goal.clone()
+
             # In the dynamic goal case, the goal might change every step
             goal = torch.tensor(env.target, device=device, dtype=torch.float).unsqueeze(0)
 
@@ -126,7 +128,7 @@ def train(args):
 
             # Store the transition in memory
             if not (done and reward < 0):
-                episode_memory.append((state, action, next_state, reward, goal))
+                episode_memory.append((state, action, next_state, reward, old_goal, goal))
 
             # Move to the next state
             state = next_state
@@ -150,13 +152,13 @@ def train(args):
 
         # Experience Replay
         for t in range(len(episode_memory)):
-            state, action, next_state, reward, goal = episode_memory[t]
+            state, action, next_state, reward, old_goal, goal = episode_memory[t]
 
             state_memory = torch.cat((state, goal), 1)
-            if not torch.all(next_state == goal):
-                next_state_memory = torch.cat((next_state, goal), 1)
-            else:
+            if torch.all(next_state == goal):
                 next_state_memory = None
+            else:
+                next_state_memory = torch.cat((next_state, goal), 1)
 
             memory.push(state_memory, action, next_state_memory, reward)
 
@@ -164,7 +166,7 @@ def train(args):
             if args.HER:
                 for g in range(args.goals):
                     future_goal = np.random.randint(t, len(episode_memory))
-                    _, _, new_goal, _, _ = episode_memory[future_goal]
+                    _, _, new_goal, _, _, _ = episode_memory[future_goal]
                     state_memory = torch.cat((state, new_goal), 1)
                     if torch.all(next_state == new_goal):  # Done
                         next_state_memory = None
@@ -177,30 +179,35 @@ def train(args):
         # DHER
         if args.DHER:
             finish = False
-            for j_ep, failed_ep_j in enumerate(failed_episodes):
-                for i_i, t_i in enumerate(episode_memory):
-                    for j_j, t_j in enumerate(failed_ep_j):
-                        if torch.all(t_i[2] == t_j[4]):
-                            m = min(i_i, j_j)
-                            for t in range(m, -1, -1):
-                                new_goal = failed_ep_j[j_j - t][4]
-                                next_state = episode_memory[i_i - t][2]
-                                if torch.all(next_state == new_goal):
-                                    next_state_memory = None
-                                    reward = torch.zeros(1, 1)
-                                else:
-                                    next_state_memory = torch.cat((next_state, new_goal), 1)
-                                    reward = torch.zeros(1, 1) - 1.0
-                                state_memory = torch.cat((episode_memory[i_i - t][0], new_goal), 1)
-                                action = episode_memory[i_i - t][1]
-                                memory.push(state_memory, action, next_state_memory, reward)
-                            finish = True
+            for i_ep, failed_ep_i in enumerate(failed_episodes):
+                for j_ep, failed_ep_j in enumerate(failed_episodes):
+                    if i_ep == j_ep:
+                        continue
+                    for i_i, t_i in enumerate(failed_ep_i):
+                        for j_j, t_j in enumerate(failed_ep_j):
+                            # Checks if the ith episode's next state is the same as the jth episode's next goal
+                            if torch.all(t_i[2] == t_j[5]):
+                                m = min(i_i, j_j)
+                                for t in range(m, -1, -1):
+                                    new_current_goal = failed_ep_j[j_j - t][4]
+                                    new_next_goal = failed_ep_j[j_j - t][5]
+                                    next_state = failed_ep_i[i_i - t][2]
+                                    if torch.all(next_state == new_next_goal):
+                                        next_state_memory = None
+                                        reward = torch.zeros(1, 1)
+                                    else:
+                                        next_state_memory = torch.cat((next_state, new_next_goal), 1)
+                                        reward = torch.zeros(1, 1) - 1.0
+                                    state_memory = torch.cat((failed_ep_i[i_i - t][0], new_current_goal), 1)
+                                    action = failed_ep_i[i_i - t][1]
+                                    memory.push(state_memory, action, next_state_memory, reward)
+                                finish = True
+                            if finish:
+                                break
                         if finish:
                             break
                     if finish:
                         break
-                if finish:
-                    break
 
         # Perform one step of the optimization (on the target network)
         optimization_steps = 5
